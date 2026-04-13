@@ -137,54 +137,60 @@ def make_subject(all_articles: list[dict]) -> str:
 def build_email_html(sections_data: dict) -> str:
     today_str = date.today().strftime("%Y년 %m월 %d일")
     section_labels = {"tech": "🔧 테크", "ai": "🤖 AI", "dev": "💻 개발"}
+    section_colors = {"tech": "#4f46e5", "ai": "#0ea5e9", "dev": "#10b981"}
 
     sections_html = ""
     for section, articles in sections_data.items():
         label = section_labels.get(section, section.upper())
-        rows = ""
-        for a in articles:
-            rows += f"""
-            <tr>
-              <td><a href="{a['link']}" style="color:#1a73e8;text-decoration:none;font-weight:500">{a['title']}</a></td>
-              <td style="color:#555">{a['summary']}</td>
-            </tr>"""
+        color = section_colors.get(section, "#666")
+        cards = ""
+        for i, a in enumerate(articles):
+            cards += f"""
+            <tr><td style="padding:0 0 10px 0">
+              <table width="100%" cellpadding="0" cellspacing="0" style="background:white;border-radius:8px;border:1px solid #e5e7eb">
+                <tr><td style="padding:14px 16px">
+                  <table width="100%" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td width="24" valign="top" style="padding-top:1px">
+                        <span style="display:inline-block;width:20px;height:20px;background:{color};border-radius:50%;color:white;font-size:11px;font-weight:700;text-align:center;line-height:20px">{i+1}</span>
+                      </td>
+                      <td style="padding-left:10px">
+                        <a href="{a["link"]}" style="color:#111;text-decoration:none;font-size:14px;font-weight:600;line-height:1.4">{a["title"]}</a>
+                        <p style="margin:5px 0 0;color:#6b7280;font-size:13px;line-height:1.5">{a["summary"]}</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td></tr>
+              </table>
+            </td></tr>"""
+
         sections_html += f"""
-        <div class="section">
-          <h2>{label}</h2>
-          <table>
-            <thead><tr><th>제목</th><th>요약</th></tr></thead>
-            <tbody>{rows}</tbody>
-          </table>
-        </div>"""
+        <tr><td style="padding:0 0 24px 0">
+          <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:{color};letter-spacing:.5px">{label}</p>
+          <table width="100%" cellpadding="0" cellspacing="0">{cards}</table>
+        </td></tr>"""
 
     return f"""<!DOCTYPE html>
-<html lang="ko"><head><meta charset="UTF-8">
-<style>
-  body {{ font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
-          max-width:700px;margin:0 auto;padding:20px;background:#f5f5f5;color:#333 }}
-  .header {{ background:#1a1a2e;color:white;padding:20px 24px;border-radius:8px;margin-bottom:20px;text-align:center }}
-  .header h1 {{ margin:0;font-size:22px }}
-  .header p {{ margin:4px 0 0;opacity:.7;font-size:13px }}
-  .section {{ background:white;border-radius:8px;margin-bottom:16px;
-              overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08) }}
-  .section h2 {{ margin:0;padding:14px 20px;font-size:15px;background:#f8f8f8;
-                 border-bottom:1px solid #eee }}
-  table {{ width:100%;border-collapse:collapse }}
-  th {{ padding:10px 16px;background:#fafafa;font-size:12px;color:#888;
-        text-align:left;border-bottom:1px solid #eee;font-weight:600 }}
-  td {{ padding:12px 16px;font-size:13px;border-bottom:1px solid #f0f0f0;
-        vertical-align:top;line-height:1.5 }}
-  tr:last-child td {{ border-bottom:none }}
-  tr:hover td {{ background:#fafeff }}
-  .footer {{ text-align:center;font-size:12px;color:#aaa;margin-top:16px }}
-</style></head>
-<body>
-  <div class="header">
-    <h1>📰 TLDR 한국어판</h1>
-    <p>{today_str}</p>
-  </div>
-  {sections_html}
-  <div class="footer"><p>원문: <a href="https://tldr.tech" style="color:#aaa">tldr.tech</a></p></div>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:'Apple SD Gothic Neo','Malgun Gothic',Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 0">
+    <tr><td align="center">
+      <table width="620" cellpadding="0" cellspacing="0" style="max-width:620px;width:100%">
+        <tr><td style="padding:0 0 20px 0">
+          <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;border-radius:10px">
+            <tr><td style="padding:24px;text-align:center">
+              <p style="margin:0;font-size:22px;font-weight:700;color:white">📰 TLDR 한국어</p>
+              <p style="margin:6px 0 0;font-size:13px;color:#94a3b8">{today_str} · 오늘의 테크 뉴스</p>
+            </td></tr>
+          </table>
+        </td></tr>
+        {sections_html}
+        <tr><td style="text-align:center;padding:8px 0 24px">
+          <p style="margin:0;font-size:12px;color:#9ca3af">원문: <a href="https://tldr.tech" style="color:#9ca3af">tldr.tech</a></p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
 </body></html>"""
 
 
