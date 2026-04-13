@@ -40,6 +40,7 @@ def fetch_tldr(section: str) -> list[dict]:
         return []
 
     soup = BeautifulSoup(res.text, "html.parser")
+    print(res.text[:3000])
     articles = []
 
     for h3 in soup.find_all("h3"):
