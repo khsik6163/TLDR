@@ -1,0 +1,28 @@
+name: TLDR 한국어 일일 발송
+
+on:
+  schedule:
+    - cron: "0 22 * * 1-5"   # 한국 시간 오전 7시 (UTC 22:00), 월~금
+  workflow_dispatch:           # 수동 실행 버튼
+
+jobs:
+  send-newsletter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 뉴스레터 발송
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NAVER_USER: ${{ secrets.NAVER_USER }}
+          NAVER_PASSWORD: ${{ secrets.NAVER_PASSWORD }}
+          RECIPIENTS: ${{ secrets.RECIPIENTS }}
+        run: python main.py
