@@ -9,7 +9,7 @@ from datetime import date
 import anthropic
 
 # ── 설정 ───────────────────────────────────────────────
-RECIPIENTS = os.environ["RECIPIENTS"].split(",")
+RECIPIENTS = [r.strip() for r in os.environ["RECIPIENTS"].split(",") if r.strip()]
 NAVER_USER = os.environ["NAVER_USER"]
 NAVER_PASSWORD = os.environ["NAVER_PASSWORD"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
@@ -24,7 +24,6 @@ def fetch_tldr(section: str) -> list[dict]:
         f"https://tldr.tech/{section}/{today}",
         f"https://tldr.tech/api/latest/{section}",
     ]
-
     res = None
     for url in urls:
         try:
@@ -37,26 +36,22 @@ def fetch_tldr(section: str) -> list[dict]:
             print(f"  [{section}] 요청 실패: {e}")
 
     if not res:
-        print(f"  [{section}] 가져오기 실패")
         return []
 
     soup = BeautifulSoup(res.text, "html.parser")
 
-    # 방법 1: Next.js __NEXT_DATA__ JSON에서 파싱
+    # Next.js __NEXT_DATA__ 시도
     next_script = soup.find("script", id="__NEXT_DATA__")
     if next_script:
         try:
             data = json.loads(next_script.string)
             page_props = data.get("props", {}).get("pageProps", {})
-
-            # 여러 가능한 키 시도
             raw_articles = (
                 page_props.get("newsletter", {}).get("articles")
                 or page_props.get("articles")
                 or page_props.get("stories")
                 or []
             )
-
             articles = []
             for item in raw_articles:
                 title = item.get("title") or item.get("headline", "")
@@ -64,29 +59,20 @@ def fetch_tldr(section: str) -> list[dict]:
                 summary = item.get("description") or item.get("summary") or item.get("excerpt", "")
                 if title and link and len(title) > 10:
                     articles.append({"title": title, "link": link, "summary": summary})
-
             if articles:
                 print(f"  [{section}] {len(articles)}개 파싱됨 (JSON)")
                 return articles[:10]
-
-            # JSON 구조 디버그용 출력
-            print(f"  [{section}] JSON 키 목록: {list(page_props.keys())}")
-
         except Exception as e:
             print(f"  [{section}] JSON 파싱 실패: {e}")
 
-    # 방법 2: utm_source=tldr 링크 기반 파싱 (폴백)
+    # 폴백: utm_source=tldr 링크 기반
     articles = []
     seen = set()
     for a in soup.find_all("a", href=True):
         href = a.get("href", "")
         title = a.get_text(strip=True)
-        if (href.startswith("http")
-                and "utm_source=tldr" in href
-                and len(title) > 20
-                and title not in seen):
+        if href.startswith("http") and "utm_source=tldr" in href and len(title) > 20 and title not in seen:
             seen.add(title)
-            # 가장 가까운 p 태그에서 요약 추출
             summary = ""
             for sib in a.parents:
                 next_p = sib.find_next_sibling("p")
@@ -99,74 +85,110 @@ def fetch_tldr(section: str) -> list[dict]:
     return articles[:10]
 
 
-def translate_with_claude(articles: list[dict], section: str) -> str:
+def translate_with_claude(articles: list[dict], section: str) -> list[dict]:
+    """기사들을 한국어로 번역하고 구조화된 리스트로 반환"""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     articles_text = "\n\n".join(
-        f"제목: {a['title']}\n링크: {a['link']}\n요약: {a['summary']}"
-        for a in articles
+        f"[{i+1}] 제목: {a['title']}\n링크: {a['link']}\n요약: {a['summary']}"
+        for i, a in enumerate(articles)
     )
-    prompt = f"""아래는 TLDR {section.upper()} 뉴스레터의 오늘 기사들입니다.
-각 기사를 한국어로 번역하고, 핵심 내용을 2~3줄로 자연스럽게 요약해주세요.
+    prompt = f"""아래 TLDR {section.upper()} 기사들을 한국어로 번역하고 JSON으로만 응답하세요. 다른 텍스트 없이 JSON만.
 
-출력 형식 (HTML만 출력, 다른 텍스트 없이):
-<div class="article">
-  <h3><a href="링크">제목 (한국어)</a></h3>
-  <p>요약 내용 (한국어)</p>
-</div>
+형식:
+[
+  {{"title": "한국어 제목", "link": "원본링크", "summary": "한 줄 핵심 요약 (30자 이내)"}}
+]
 
-기사 목록:
+기사:
 {articles_text}"""
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )
-    return message.content[0].text
+    text = message.content[0].text.strip()
+    # JSON 파싱
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    return json.loads(text.strip())
 
 
-def build_email_html(sections_content: dict) -> str:
+def make_subject(all_articles: list[dict]) -> str:
+    """전체 기사 중 가장 핫한 것들로 이메일 제목 생성"""
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    titles = "\n".join(f"- {a['title']}" for a in all_articles[:15])
+    prompt = f"""아래 오늘 테크 뉴스 제목들 중 가장 핫한 것 2~3개를 골라서
+이메일 제목용 키워드로 만들어주세요.
+형식: 키워드1 · 키워드2 · 키워드3
+예시: Tesla 신모델 · Meta AI 출시 · GitHub 장애
+다른 텍스트 없이 키워드만 응답.
+
+{titles}"""
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=100,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text.strip()
+
+
+def build_email_html(sections_data: dict) -> str:
     today_str = date.today().strftime("%Y년 %m월 %d일")
     section_labels = {"tech": "🔧 테크", "ai": "🤖 AI", "dev": "💻 개발"}
+
     sections_html = ""
-    for section, content in sections_content.items():
+    for section, articles in sections_data.items():
         label = section_labels.get(section, section.upper())
+        rows = ""
+        for a in articles:
+            rows += f"""
+            <tr>
+              <td><a href="{a['link']}" style="color:#1a73e8;text-decoration:none;font-weight:500">{a['title']}</a></td>
+              <td style="color:#555">{a['summary']}</td>
+            </tr>"""
         sections_html += f"""
         <div class="section">
-            <h2>{label}</h2>
-            {content}
-        </div><hr>"""
+          <h2>{label}</h2>
+          <table>
+            <thead><tr><th>제목</th><th>요약</th></tr></thead>
+            <tbody>{rows}</tbody>
+          </table>
+        </div>"""
+
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8">
 <style>
-  body {{ font-family: 'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
-          max-width:680px;margin:0 auto;padding:20px;background:#f9f9f9;color:#333 }}
-  .header {{ background:#1a1a2e;color:white;padding:24px;border-radius:8px;
-             margin-bottom:24px;text-align:center }}
-  .header h1 {{ margin:0;font-size:24px }}
-  .header p {{ margin:6px 0 0;opacity:.7;font-size:14px }}
-  .section {{ background:white;padding:20px 24px;border-radius:8px;
-              margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.08) }}
-  .section h2 {{ margin:0 0 16px;font-size:18px;border-bottom:2px solid #eee;padding-bottom:8px }}
-  .article {{ margin-bottom:20px }}
-  .article h3 {{ margin:0 0 6px;font-size:15px }}
-  .article h3 a {{ color:#1a73e8;text-decoration:none }}
-  .article p {{ margin:0;font-size:14px;line-height:1.6;color:#555 }}
-  .footer {{ text-align:center;font-size:12px;color:#999;margin-top:24px }}
-  hr {{ border:none;border-top:1px solid #eee;margin:16px 0 }}
+  body {{ font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+          max-width:700px;margin:0 auto;padding:20px;background:#f5f5f5;color:#333 }}
+  .header {{ background:#1a1a2e;color:white;padding:20px 24px;border-radius:8px;margin-bottom:20px;text-align:center }}
+  .header h1 {{ margin:0;font-size:22px }}
+  .header p {{ margin:4px 0 0;opacity:.7;font-size:13px }}
+  .section {{ background:white;border-radius:8px;margin-bottom:16px;
+              overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08) }}
+  .section h2 {{ margin:0;padding:14px 20px;font-size:15px;background:#f8f8f8;
+                 border-bottom:1px solid #eee }}
+  table {{ width:100%;border-collapse:collapse }}
+  th {{ padding:10px 16px;background:#fafafa;font-size:12px;color:#888;
+        text-align:left;border-bottom:1px solid #eee;font-weight:600 }}
+  td {{ padding:12px 16px;font-size:13px;border-bottom:1px solid #f0f0f0;
+        vertical-align:top;line-height:1.5 }}
+  tr:last-child td {{ border-bottom:none }}
+  tr:hover td {{ background:#fafeff }}
+  .footer {{ text-align:center;font-size:12px;color:#aaa;margin-top:16px }}
 </style></head>
 <body>
   <div class="header">
     <h1>📰 TLDR 한국어판</h1>
-    <p>{today_str} · 오늘의 테크 뉴스 요약</p>
+    <p>{today_str}</p>
   </div>
   {sections_html}
-  <div class="footer"><p>원문 보기: <a href="https://tldr.tech">tldr.tech</a></p></div>
+  <div class="footer"><p>원문: <a href="https://tldr.tech" style="color:#aaa">tldr.tech</a></p></div>
 </body></html>"""
 
 
-def send_email(html_body: str):
-    today_str = date.today().strftime("%m/%d")
-    subject = f"TLDR-{today_str} 오늘의 테크 뉴스"
+def send_email(subject: str, html_body: str):
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = NAVER_USER
@@ -180,21 +202,32 @@ def send_email(html_body: str):
 
 def main():
     print("📥 TLDR 뉴스 수집 중...")
-    sections_content = {}
+    sections_data = {}
+    all_articles = []
+
     for section in SECTIONS:
-        articles = fetch_tldr(section)
-        if not articles:
+        raw = fetch_tldr(section)
+        if not raw:
             print(f"  [{section}] 기사 없음, 건너뜀")
             continue
         print(f"  [{section}] Claude 번역 중...")
-        translated = translate_with_claude(articles, section)
-        sections_content[section] = translated
-    if not sections_content:
+        translated = translate_with_claude(raw, section)
+        sections_data[section] = translated
+        all_articles.extend(translated)
+
+    if not sections_data:
         print("❌ 수집된 기사가 없습니다.")
         return
+
+    print("✍️  이메일 제목 생성 중...")
+    today_str = date.today().strftime("%m/%d")
+    keywords = make_subject(all_articles)
+    subject = f"[TLDR] {today_str} {keywords}"
+
+    print(f"  제목: {subject}")
     print("📧 이메일 발송 중...")
-    html = build_email_html(sections_content)
-    send_email(html)
+    html = build_email_html(sections_data)
+    send_email(subject, html)
 
 
 if __name__ == "__main__":
