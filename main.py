@@ -166,7 +166,7 @@ def build_email_html(sections_content: dict) -> str:
 
 def send_email(html_body: str):
     today_str = date.today().strftime("%m/%d")
-    subject = f"[TLDR 한국어] {today_str} 오늘의 테크 뉴스"
+    subject = f"TLDR-{today_str} 오늘의 테크 뉴스"
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = NAVER_USER
